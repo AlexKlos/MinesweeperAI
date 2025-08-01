@@ -2,7 +2,12 @@ import logging
 import os
 import time
 
+from datetime import datetime
 from multiprocessing import Event
+
+import cv2
+import mss
+import numpy as np
 
 from minesweeper_ai.ipc import SharedFlag
 from minesweeper_ai.core_types import Rectangle, State
@@ -11,9 +16,48 @@ if os.name == "nt":
     import ctypes
 
 
-def take_screenshot(playground: Rectangle) -> None:
-    """Stub for screenshotting, to be implemented later."""
-    logging.debug("take_screenshot() STUB called with %s", playground)
+def capture_playground_sample(playground: Rectangle) -> np.ndarray:
+    if os.name == "nt":
+        cursor_x = playground.x + playground.w + 1
+        cursor_y = playground.y
+        ctypes.windll.user32.SetCursorPos(int(cursor_x), int(cursor_y))
+        time.sleep(0.01)
+
+    with mss.mss() as screenshot:
+        monitor = {
+            "left": playground.x,
+            "top": playground.y,
+            "width": 480,
+            "height": 256,
+        }
+        img = np.array(screenshot.grab(monitor))[:, :, :3]
+
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+
+    raw_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/raw_screenshot"))
+    os.makedirs(raw_dir, exist_ok=True)
+    raw_path = os.path.join(raw_dir, f"{timestamp}.png")
+    cv2.imwrite(raw_path, img)
+
+    processed_array = np.zeros((16, 30), dtype=np.uint8)
+    for i in range(16):
+        for j in range(30):
+            block = img[i*16:(i+1)*16, j*16:(j+1)*16, :]
+            avg_val = int(np.round(block.mean()))
+            processed_array[i, j] = avg_val
+
+    processed_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/30x16_screenshot"))
+    os.makedirs(processed_dir, exist_ok=True)
+    processed_path = os.path.join(processed_dir, f"{timestamp}.png")
+    cv2.imwrite(processed_path, processed_array)
+
+    npy_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/numpy_array"))
+    os.makedirs(npy_dir, exist_ok=True)
+    npy_path = os.path.join(npy_dir, f"{timestamp}.npy")
+    processed_expanded_array = np.expand_dims(processed_array.T, axis=-1)
+    np.save(npy_path, processed_expanded_array)
+
+    return processed_expanded_array
 
 
 def predict_move() -> None:
@@ -66,7 +110,7 @@ def pipeline_worker(
         while True:
             start_event.wait()
             main_pipeline_flag.set(State.BUSY.value)
-            take_screenshot(playground_rectangle)
+            capture_playground_sample(playground_rectangle)
             predict_move()
             click_cell(playground_rectangle)
             main_pipeline_flag.set(State.IDLE.value)
