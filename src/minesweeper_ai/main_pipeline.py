@@ -1,15 +1,11 @@
-"""
-Functions take_screenshot() and predict_move() are currently stubs (to be implemented later).
-"""
 import logging
 import os
 import time
 
-from logging.handlers import RotatingFileHandler
-from multiprocessing import Event, Process
+from multiprocessing import Event
 
 from minesweeper_ai.ipc import SharedFlag
-from minesweeper_ai.types import Rectangle, State
+from minesweeper_ai.core_types import Rectangle, State
 
 if os.name == "nt":
     import ctypes
@@ -49,6 +45,17 @@ def pipeline_worker(
     flag_name: str,
     process_sleep: float = 0.01,
 ) -> None:
+    log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, "main_pipeline.log")
+    from logging.handlers import RotatingFileHandler
+    handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=3)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(processName)s] %(levelname)s: %(message)s",
+        handlers=[handler],
+    )
+
     playground_rectangle = Rectangle(*playground_tuple)
     main_pipeline_flag = SharedFlag(flag_name, create=True)
     logging.info(
@@ -74,59 +81,3 @@ def pipeline_worker(
         main_pipeline_flag.close()
         logging.info("Main Pipeline stopped.")
 
-
-def spawn_main_pipeline(
-    playground: Rectangle,
-    start_event: Event,
-    flag_name: str,
-    name: str = "main_pipeline",
-    daemon: bool = True,
-) -> Process:
-    main_pipeline_process = Process(
-        target=pipeline_worker,
-        name=name,
-        args=((playground.x, playground.y, playground.w, playground.h), start_event, flag_name),
-        daemon=daemon,
-    )
-    main_pipeline_process.start()
-    return main_pipeline_process
-
-
-def main() -> None:
-    log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
-    os.makedirs(log_dir, exist_ok=True)
-    log_path = os.path.join(log_dir, "main_pipeline.log")
-    handler = RotatingFileHandler(log_path, maxBytes=1_000_000, backupCount=3)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(processName)s] %(levelname)s: %(message)s",
-        handlers=[handler],
-    )
-
-    from multiprocessing import Event as MPEvent
-
-    flag_name = "main_pipeline_flag"
-    pipeline_flag = SharedFlag(flag_name, create=True)
-    try:
-        playground_rectangle = Rectangle(200, 200, 400, 300)
-        start_event = MPEvent()
-        pipeline_process = spawn_main_pipeline(
-            playground_rectangle, start_event, flag_name, name="main_pipeline", daemon=True
-        )
-        for step_number in range(3):
-            logging.info("Sending start_event for step %d", step_number + 1)
-            start_event.set()
-            time.sleep(0.2)
-        logging.info("Shutting down main_pipeline process.")
-        pipeline_process.terminate()
-        pipeline_process.join(timeout=2.0)
-    finally:
-        try:
-            pipeline_flag.close()
-            pipeline_flag.unlink()
-        except Exception:
-            pass
-
-
-if __name__ == "__main__":
-    main()

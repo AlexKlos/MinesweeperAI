@@ -1,6 +1,6 @@
 from multiprocessing import shared_memory
 
-from minesweeper_ai.types import State
+from minesweeper_ai.core_types import State
 
 
 class SharedFlag:

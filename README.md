@@ -24,7 +24,7 @@ project_root/
 │      ├─ manager.py            # Process and application manager
 │      ├─ rich_interface.py     # TUI/CLI interface for monitoring the application state
 │      ├─ ipc.py                # Inter-process communication utilities (shared memory, events, etc.)
-│      └─ types.py              # Common data structures and enums for statuses
+│      └─ core_types.py         # Common data structures and enums for statuses
 ├─ project_structure.txt        # Project structure
 ├─ requirements.txt             # Project dependencies
 ├─ README.md                    # Project description
