@@ -1,16 +1,17 @@
 import logging
 import os
+import struct
 import time
 
 from datetime import datetime
 from multiprocessing import Event
+from multiprocessing.shared_memory import SharedMemory
 
 import cv2
 import mss
 import numpy as np
 
-from minesweeper_ai.ipc import SharedFlag
-from minesweeper_ai.core_types import Rectangle, State
+from minesweeper_ai.core_types import Rectangle
 
 if os.name == "nt":
     import ctypes
@@ -86,7 +87,7 @@ def click_cell(playground: Rectangle) -> tuple[int, int]:
 def pipeline_worker(
     playground_tuple: tuple[int, int, int, int],
     start_event: Event,
-    flag_name: str,
+    shared_memory_name: str,
     process_sleep: float = 0.01,
 ) -> None:
     log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
@@ -100,28 +101,42 @@ def pipeline_worker(
         handlers=[handler],
     )
 
+    shared_buffer_size = 1 + 8 + 480
+    shared_memory = SharedMemory(name=shared_memory_name, create=True, size=shared_buffer_size)
+    shared_memory_buffer = shared_memory.buf
+    shared_memory_buffer[0] = 0
+
     playground_rectangle = Rectangle(*playground_tuple)
-    main_pipeline_flag = SharedFlag(flag_name, create=True)
     logging.info(
-        "Main Pipeline started. Playground=%s, flag_name=%s", playground_rectangle, flag_name
+        "Main Pipeline started. Playground=%s, shared_memory_name=%s", playground_rectangle, shared_memory_name
     )
+
     try:
-        main_pipeline_flag.set(State.IDLE.value)
         while True:
             start_event.wait()
-            main_pipeline_flag.set(State.BUSY.value)
-            capture_playground_sample(playground_rectangle)
-            predict_move()
-            click_cell(playground_rectangle)
-            main_pipeline_flag.set(State.IDLE.value)
             start_event.clear()
-            time.sleep(process_sleep)
-    except KeyboardInterrupt:
-        logging.info("Main Pipeline interrupted by KeyboardInterrupt")
-    except Exception as e:
-        main_pipeline_flag.set(State.ERROR.value)
-        logging.exception("Main Pipeline crashed with exception: %s", e)
-    finally:
-        main_pipeline_flag.close()
-        logging.info("Main Pipeline stopped.")
+            shared_memory_buffer[0] = 0
 
+            processed_image = capture_playground_sample(playground_rectangle)
+            logging.info("Screenshot captured and processed.")
+
+            predict_move()
+            logging.info("Predict_move() called.")
+
+            click_x, click_y = click_cell(playground_rectangle)
+            logging.info("Clicked at (%d, %d) in playground", click_x, click_y)
+
+            processed_flat = processed_image.squeeze().T.flatten()
+            timestamp_microseconds = int(datetime.now().timestamp() * 1_000_000)
+            shared_memory_buffer[1:9] = struct.pack("<Q", timestamp_microseconds)
+            shared_memory_buffer[9:489] = processed_flat.tobytes()
+            shared_memory_buffer[0] = 1
+            logging.info("Sample written to shared memory, timestamp=%d", timestamp_microseconds)
+
+            time.sleep(process_sleep)
+    except Exception as error:
+        logging.exception("Main Pipeline crashed: %s", error)
+    finally:
+        shared_memory.close()
+        shared_memory.unlink()
+        logging.info("Main Pipeline stopped.")

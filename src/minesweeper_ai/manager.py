@@ -1,18 +1,19 @@
 import logging
 import os
+import struct
 import threading
 import time
 
 from logging.handlers import RotatingFileHandler
 from multiprocessing import Event, Process
+from multiprocessing.shared_memory import SharedMemory
 
 import cv2
 import keyboard
 import mss
 import numpy as np
 
-from minesweeper_ai.core_types import Rectangle, State
-from minesweeper_ai.ipc import SharedFlag
+from minesweeper_ai.core_types import Rectangle
 from minesweeper_ai.main_pipeline import pipeline_worker
 
 
@@ -47,7 +48,7 @@ def get_playground_coords(template_path: str) -> Rectangle:
     raise ValueError("Playground not found on any monitor.")
 
 
-def check_click_success() -> bool:
+def check_click_success(processed_sample: np.ndarray, timestamp_microseconds: int) -> bool:
     """Evaluate result of last click. Stub: always True."""
     return True
 
@@ -67,28 +68,6 @@ def spawn_main_pipeline(
     )
     main_pipeline_process.start()
     return main_pipeline_process
-
-
-def wait_for_flag(
-    flag: SharedFlag,
-    from_state: State,
-    to_state: State,
-    timeout: float = 5.0,
-    poll_interval: float = 0.01,
-) -> bool:
-    start_time = time.monotonic()
-    while time.monotonic() - start_time < timeout:
-        if flag.get() != from_state.value:
-            break
-        time.sleep(poll_interval)
-    else:
-        return False
-
-    while time.monotonic() - start_time < timeout:
-        if flag.get() == to_state.value:
-            return True
-        time.sleep(poll_interval)
-    return False
 
 
 def hotkey_listener(paused_flag: threading.Event, shutdown_flag: threading.Event) -> None:
@@ -127,35 +106,32 @@ def main() -> None:
     playground_rectangle = get_playground_coords(playground_template)
     logging.info("Playground detected at %s", playground_rectangle)
 
-    flag_name = "main_pipeline_flag"
+    shared_memory_name = "playground_shared_memory"
     start_event = Event()
     main_pipeline_process = spawn_main_pipeline(
-        playground_rectangle, start_event, flag_name, name="main_pipeline", daemon=True
+        playground_rectangle, start_event, shared_memory_name, name="main_pipeline", daemon=True
     )
 
+    shared_buffer_size = 1 + 8 + 480
     for _ in range(100):
         try:
-            main_pipeline_flag = SharedFlag(flag_name, create=False)
+            shared_memory = SharedMemory(name=shared_memory_name, create=False, size=shared_buffer_size)
+            shared_memory_buffer = shared_memory.buf
             break
         except FileNotFoundError:
             time.sleep(0.05)
     else:
-        raise RuntimeError("main_pipeline_flag not found, main_pipeline may not be running!")
+        raise RuntimeError("SharedMemory buffer not found! Pipeline process may not be running.")
 
     paused_flag = threading.Event()
-    paused_flag.set()
     shutdown_flag = threading.Event()
+    paused_flag.set()
     hotkey_thread = threading.Thread(target=hotkey_listener, args=(paused_flag, shutdown_flag), daemon=True)
     shutdown_thread = threading.Thread(target=shutdown_listener, args=(shutdown_flag,), daemon=True)
     hotkey_thread.start()
     shutdown_thread.start()
 
     try:
-        logging.info("Waiting for main_pipeline to become IDLE...")
-        while main_pipeline_flag.get() != State.IDLE.value:
-            time.sleep(0.05)
-
-        logging.info("main_pipeline is IDLE. Starting play loop...")
         step = 1
         while not shutdown_flag.is_set():
             if paused_flag.is_set():
@@ -166,24 +142,34 @@ def main() -> None:
                     break
                 logging.info("Resuming main loop.")
 
-            logging.info("Step %d: Sending start_event to main_pipeline", step)
+            logging.info("Step %d: sending start_event to main_pipeline", step)
             start_event.set()
-            ok = wait_for_flag(
-                main_pipeline_flag,
-                from_state=State.IDLE,
-                to_state=State.IDLE,
-                timeout=5.0
-            )
-            if not ok:
-                logging.error("Timeout waiting for main_pipeline to complete step!")
-                break
-            if not check_click_success():
-                logging.info("Click failed (game probably lost). Exiting loop.")
-                break
-            step += 1
 
-        if shutdown_flag.is_set():
-            logging.info("Graceful shutdown requested. Exiting main loop.")
+            wait_start = time.monotonic()
+            while shared_memory_buffer[0] != 1 and not shutdown_flag.is_set():
+                if time.monotonic() - wait_start > 5.0:
+                    logging.error("Timeout waiting for pipeline sample.")
+                    return
+                time.sleep(0.01)
+            if shutdown_flag.is_set():
+                break
+
+            timestamp_microseconds = struct.unpack("<Q", shared_memory_buffer[1:9])[0]
+            processed_flat_bytes = bytes(shared_memory_buffer[9:489])
+            processed_sample = np.frombuffer(processed_flat_bytes, dtype=np.uint8).reshape((30, 16, 1))
+
+            logging.info(
+                "Read playground sample, timestamp=%d, min=%d, max=%d",
+                timestamp_microseconds, processed_sample.min(), processed_sample.max()
+            )
+
+            shared_memory_buffer[0] = 0
+
+            if not check_click_success(processed_sample, timestamp_microseconds):
+                logging.info("Click analysis failed. Stopping loop.")
+                break
+
+            step += 1
 
     except KeyboardInterrupt:
         logging.info("Manager interrupted by KeyboardInterrupt")
@@ -191,7 +177,7 @@ def main() -> None:
         main_pipeline_process.terminate()
         main_pipeline_process.join(timeout=2.0)
         try:
-            main_pipeline_flag.close()
+            shared_memory.close()
         except Exception:
             pass
         logging.info("Manager stopped.")
