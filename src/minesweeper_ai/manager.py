@@ -6,16 +6,45 @@ import time
 from logging.handlers import RotatingFileHandler
 from multiprocessing import Event, Process
 
+import cv2
 import keyboard
+import mss
+import numpy as np
 
 from minesweeper_ai.core_types import Rectangle, State
 from minesweeper_ai.ipc import SharedFlag
 from minesweeper_ai.main_pipeline import pipeline_worker
 
 
+def grab_screen(monitor_idx=1) -> tuple[np.ndarray, dict]:
+    with mss.mss() as sct:
+        monitor = sct.monitors[monitor_idx]
+        img = np.array(sct.grab(monitor))[:, :, :3]
+    return img, monitor
+
+
 def get_playground_coords(template_path: str) -> Rectangle:
-    """Stub for finding playground coordinates based on template."""
-    return Rectangle(200, 200, 400, 300)
+    template = cv2.imread(template_path, cv2.IMREAD_COLOR)
+    if template is None:
+        raise FileNotFoundError(f"Template file not found: {template_path}")
+    h, w, _ = template.shape
+
+    with mss.mss() as sct:
+        for idx, monitor in enumerate(sct.monitors[1:], 1):
+            screenshot = np.array(sct.grab(monitor))[:, :, :3]
+            res = cv2.matchTemplate(screenshot, template, cv2.TM_CCOEFF_NORMED)
+            min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(res)
+            threshold = 0.9
+            if max_val >= threshold:
+                top_left = max_loc
+                abs_x = monitor["left"] + top_left[0]
+                abs_y = monitor["top"] + top_left[1]
+                logging.info(f"Playground found on monitor {idx} with confidence={max_val:.2f}")
+                return Rectangle(x=abs_x, y=abs_y, w=w, h=h)
+            else:
+                logging.info(f"Monitor {idx}: not found, confidence={max_val:.2f}")
+
+    raise ValueError("Playground not found on any monitor.")
 
 
 def check_click_success() -> bool:
