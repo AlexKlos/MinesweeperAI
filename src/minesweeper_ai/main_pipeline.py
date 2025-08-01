@@ -1,5 +1,5 @@
 """
-Functions screenshoter() and predictor() are currently stubs (to be implemented later).
+Functions take_screenshot() and predict_move() are currently stubs (to be implemented later).
 """
 import logging
 import os
@@ -15,20 +15,20 @@ if os.name == "nt":
     import ctypes
 
 
-def screenshoter(playground: Rectangle) -> None:
+def take_screenshot(playground: Rectangle) -> None:
     """Stub for screenshotting, to be implemented later."""
-    logging.debug("screenshoter() STUB called with %s", playground)
+    logging.debug("take_screenshot() STUB called with %s", playground)
 
 
-def predictor() -> None:
+def predict_move() -> None:
     """Stub for prediction, to be implemented later."""
-    logging.debug("predictor() STUB called")
+    logging.debug("predict_move() STUB called")
 
 
-def clicker(playground: Rectangle) -> tuple[int, int]:
+def click_cell(playground: Rectangle) -> tuple[int, int]:
     """Click at a random point inside the playground."""
     x, y = playground.random_point()
-    logging.info("clicker(): clicking at (%d, %d) inside %s", x, y, playground)
+    logging.info("click_cell(): clicking at (%d, %d) inside %s", x, y, playground)
     if os.name == "nt":
         user32 = ctypes.windll.user32
         user32.SetCursorPos(int(x), int(y))
@@ -39,7 +39,7 @@ def clicker(playground: Rectangle) -> tuple[int, int]:
         time.sleep(0.02)
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     else:
-        logging.warning("clicker(): non-Windows platform — simulated click only")
+        logging.warning("click_cell(): non-Windows platform — simulated click only")
     return x, y
 
 
@@ -59,9 +59,9 @@ def pipeline_worker(
         while True:
             start_event.wait()
             main_pipeline_flag.set(State.BUSY.value)
-            screenshoter(playground_rectangle)
-            predictor()
-            clicker(playground_rectangle)
+            take_screenshot(playground_rectangle)
+            predict_move()
+            click_cell(playground_rectangle)
             main_pipeline_flag.set(State.IDLE.value)
             start_event.clear()
             time.sleep(process_sleep)
