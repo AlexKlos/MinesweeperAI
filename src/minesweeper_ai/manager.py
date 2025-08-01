@@ -62,16 +62,25 @@ def wait_for_flag(
     return False
 
 
-def hotkey_listener(paused_flag: threading.Event) -> None:
+def hotkey_listener(paused_flag: threading.Event, shutdown_flag: threading.Event) -> None:
     logging.info("Hotkey thread started. Press 'P' to pause/unpause the manager loop.")
-    while True:
+    while not shutdown_flag.is_set():
         keyboard.wait('p')
+        if shutdown_flag.is_set():
+            break
         if not paused_flag.is_set():
             paused_flag.set()
             logging.info("PAUSE activated. Press 'P' again to continue.")
         else:
             paused_flag.clear()
             logging.info("PAUSE deactivated. Manager will resume.")
+
+
+def shutdown_listener(shutdown_flag: threading.Event) -> None:
+    logging.info("Shutdown thread started. Press 'Q' to exit gracefully.")
+    keyboard.wait('q')
+    shutdown_flag.set()
+    logging.info("Shutdown requested via hotkey 'Q'.")
 
 
 def main() -> None:
@@ -106,8 +115,11 @@ def main() -> None:
 
     paused_flag = threading.Event()
     paused_flag.set()
-    hotkey_thread = threading.Thread(target=hotkey_listener, args=(paused_flag,), daemon=True)
+    shutdown_flag = threading.Event()
+    hotkey_thread = threading.Thread(target=hotkey_listener, args=(paused_flag, shutdown_flag), daemon=True)
+    shutdown_thread = threading.Thread(target=shutdown_listener, args=(shutdown_flag,), daemon=True)
     hotkey_thread.start()
+    shutdown_thread.start()
 
     try:
         logging.info("Waiting for main_pipeline to become IDLE...")
@@ -116,11 +128,13 @@ def main() -> None:
 
         logging.info("main_pipeline is IDLE. Starting play loop...")
         step = 1
-        while True:
+        while not shutdown_flag.is_set():
             if paused_flag.is_set():
                 logging.info("Manager is PAUSED. Waiting for unpause...")
-                while paused_flag.is_set():
+                while paused_flag.is_set() and not shutdown_flag.is_set():
                     time.sleep(0.1)
+                if shutdown_flag.is_set():
+                    break
                 logging.info("Resuming main loop.")
 
             logging.info("Step %d: Sending start_event to main_pipeline", step)
@@ -138,6 +152,9 @@ def main() -> None:
                 logging.info("Click failed (game probably lost). Exiting loop.")
                 break
             step += 1
+
+        if shutdown_flag.is_set():
+            logging.info("Graceful shutdown requested. Exiting main loop.")
 
     except KeyboardInterrupt:
         logging.info("Manager interrupted by KeyboardInterrupt")
