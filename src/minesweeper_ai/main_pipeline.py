@@ -11,7 +11,7 @@ import cv2
 import mss
 import numpy as np
 
-from minesweeper_ai.core_types import Rectangle
+from minesweeper_ai.core_types import Rectangle, State
 
 if os.name == "nt":
     import ctypes
@@ -131,7 +131,7 @@ def pipeline_worker(
         while True:
             start_event.wait()
             start_event.clear()
-            shared_memory_buffer[0] = 0
+            shared_memory_buffer[0] = State.EMPTY
 
             processed_image = capture_playground_sample(playground_rectangle)
             logging.info("Screenshot captured and processed.")
@@ -145,7 +145,7 @@ def pipeline_worker(
             timestamp_microseconds = int(datetime.now().timestamp() * 1_000_000)
             shared_memory_buffer[1:9] = struct.pack("<Q", timestamp_microseconds)
             shared_memory_buffer[9:489] = processed_flat.tobytes()
-            shared_memory_buffer[0] = 1
+            shared_memory_buffer[0] = State.READY
             logging.info("Sample written to shared memory, timestamp=%d", timestamp_microseconds)
 
             time.sleep(process_sleep)

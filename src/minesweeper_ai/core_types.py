@@ -40,8 +40,5 @@ class Rectangle:
 
 class State(IntEnum):
     """Enum for the process status codes."""
-    IDLE = 0
-    BUSY = 1
-    ERROR = 2
-    SHUTDOWN = 3
-    PAUSED = 4
+    EMPTY = 0
+    READY = 1
