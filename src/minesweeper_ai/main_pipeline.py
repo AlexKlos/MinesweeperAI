@@ -18,9 +18,26 @@ if os.name == "nt":
 
 
 def capture_playground_sample(playground: Rectangle) -> np.ndarray:
+
+    def save_file(data: np.ndarray, subfolder: str, timestamp: str, filetype: str = "png") -> str:
+        save_dir = os.path.abspath(
+            os.path.join(os.path.dirname(__file__), f"../../assets/dataset/{subfolder}")
+        )
+        os.makedirs(save_dir, exist_ok=True)
+        if filetype == "png":
+            save_path = os.path.join(save_dir, f"{timestamp}.png")
+            cv2.imwrite(save_path, data)
+        elif filetype == "npy":
+            save_path = os.path.join(save_dir, f"{timestamp}.npy")
+            np.save(save_path, data)
+        else:
+            raise ValueError(f"Unsupported filetype: {filetype}")
+        return save_path
+
     if os.name == "nt":
         cursor_x = playground.x + playground.w + 1
         cursor_y = playground.y
+        import ctypes
         ctypes.windll.user32.SetCursorPos(int(cursor_x), int(cursor_y))
         time.sleep(0.01)
 
@@ -35,28 +52,18 @@ def capture_playground_sample(playground: Rectangle) -> np.ndarray:
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
 
-    raw_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/raw_screenshot"))
-    os.makedirs(raw_dir, exist_ok=True)
-    raw_path = os.path.join(raw_dir, f"{timestamp}.png")
-    cv2.imwrite(raw_path, img)
+    save_file(img, "raw_screenshot", timestamp, filetype="png")
 
     processed_array = np.zeros((16, 30), dtype=np.uint8)
     for i in range(16):
         for j in range(30):
-            block = img[i*16:(i+1)*16, j*16:(j+1)*16, :]
+            block = img[i * 16:(i + 1) * 16, j * 16:(j + 1) * 16, :]
             avg_val = int(np.round(block.mean()))
             processed_array[i, j] = avg_val
+    save_file(processed_array, "30x16_screenshot", timestamp, filetype="png")
 
-    processed_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/30x16_screenshot"))
-    os.makedirs(processed_dir, exist_ok=True)
-    processed_path = os.path.join(processed_dir, f"{timestamp}.png")
-    cv2.imwrite(processed_path, processed_array)
-
-    npy_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../assets/dataset/numpy_array"))
-    os.makedirs(npy_dir, exist_ok=True)
-    npy_path = os.path.join(npy_dir, f"{timestamp}.npy")
     processed_expanded_array = np.expand_dims(processed_array.T, axis=-1)
-    np.save(npy_path, processed_expanded_array)
+    save_file(processed_expanded_array, "numpy_array", timestamp, filetype="npy")
 
     return processed_expanded_array
 
