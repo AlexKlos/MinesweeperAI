@@ -61,18 +61,34 @@ def capture_playground_sample(playground: Rectangle) -> np.ndarray:
     return processed_expanded_array
 
 
-def predict_move() -> None:
+def predict_move(processed_image: np.ndarray) -> tuple[float, float]:
     """Stub for prediction, to be implemented later."""
-    logging.debug("predict_move() STUB called")
+    if processed_image.ndim == 3:
+        processed_image = processed_image.squeeze()
+    assert processed_image.shape == (30, 16), f"Shape is {processed_image.shape}, expected (30,16)"
+
+    norm_image = processed_image.astype(np.float32) / 255.0
+
+    heatmap = np.random.rand(30, 16).astype(np.float32)
+    heatmap /= heatmap.sum()
+
+    best_idx = np.unravel_index(np.argmax(heatmap), heatmap.shape)
+    best_x, best_y = best_idx
+
+    relative_x = (best_x + 0.5) / 30.0
+    relative_y = (best_y + 0.5) / 16.0
+
+    return relative_x, relative_y
 
 
-def click_cell(playground: Rectangle) -> tuple[int, int]:
-    """Click at a random point inside the playground."""
-    x, y = playground.random_point()
-    logging.info("click_cell(): clicking at (%d, %d) inside %s", x, y, playground)
+def click_cell(playground: Rectangle, relative_x: float, relative_y: float) -> tuple[int, int]:
+    abs_x = int(playground.x + relative_x * playground.w)
+    abs_y = int(playground.y + relative_y * playground.h)
+    logging.info("click_cell(): clicking at (%d, %d) inside %s", abs_x, abs_y, playground)
     if os.name == "nt":
+        import ctypes
         user32 = ctypes.windll.user32
-        user32.SetCursorPos(int(x), int(y))
+        user32.SetCursorPos(int(abs_x), int(abs_y))
         time.sleep(0.02)
         MOUSEEVENTF_LEFTDOWN = 0x0002
         MOUSEEVENTF_LEFTUP = 0x0004
@@ -81,7 +97,7 @@ def click_cell(playground: Rectangle) -> tuple[int, int]:
         user32.mouse_event(MOUSEEVENTF_LEFTUP, 0, 0, 0, 0)
     else:
         logging.warning("click_cell(): non-Windows platform — simulated click only")
-    return x, y
+    return abs_x, abs_y
 
 
 def pipeline_worker(
@@ -120,11 +136,10 @@ def pipeline_worker(
             processed_image = capture_playground_sample(playground_rectangle)
             logging.info("Screenshot captured and processed.")
 
-            predict_move()
-            logging.info("Predict_move() called.")
+            relative_x, relative_y = predict_move(processed_image)
 
-            click_x, click_y = click_cell(playground_rectangle)
-            logging.info("Clicked at (%d, %d) in playground", click_x, click_y)
+            abs_x, abs_y = click_cell(playground_rectangle, relative_x, relative_y)
+            logging.info("Clicked at rel=(%.3f, %.3f) -> abs=(%d, %d)", relative_x, relative_y, abs_x, abs_y)
 
             processed_flat = processed_image.squeeze().T.flatten()
             timestamp_microseconds = int(datetime.now().timestamp() * 1_000_000)
