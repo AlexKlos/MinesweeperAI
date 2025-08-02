@@ -1,3 +1,5 @@
+[![Status: Work in Progress](https://img.shields.io/badge/status-work%20in%20progress-orange)]()
+
 # MinesweeperAI
 
 An experimental project exploring whether AI can learn to play Minesweeper using only visual information from the game screen—without access to the game’s rules, logic, or mathematics. The goal is to train a neural network to solve Minesweeper purely from images, making decisions without any built-in understanding of the underlying mechanics.
@@ -31,6 +33,10 @@ project_root/
 ├─ scheme.png                   # Application architecture diagram
 └─ .gitignore
 ```
+
+## Application Architecture Diagram
+
+![Architecture](scheme.png)
 
 ## Installation and configuration
 
