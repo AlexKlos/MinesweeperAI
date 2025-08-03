@@ -9,8 +9,10 @@ from rich.panel import Panel
 
 PARAM_KEYS = [
     "Status",
-    "Step",
-    "Average Step Time"
+    "Click Counter",
+    "Average Step Time",
+    "Average Steps",
+    "Max Steps"
 ]
 PARAM_COLOR = "#9C85CC"
 LOGS_COLOR = "#62A6A8"
@@ -22,69 +24,91 @@ class LogMonitor:
         self.log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
         self.log_file = os.path.join(self.log_dir, "minesweeper_ai.log")
         self.params = {k: "" for k in PARAM_KEYS}
-        self.step_times = []
-        self.last_step_timestamp = None
-        self.paused = True
+        self.session_step_times = []
+        self.session_clicks = 0
+        self.game_steps = []
+        self.current_game_steps = 0
+        self.max_steps = 0
         self.last_status = "Pause"
-        self.last_step_num = 0
+        self.paused = True
 
     def parse_runtime_params(self):
         if not os.path.exists(self.log_file):
             self.params = {k: "?" for k in PARAM_KEYS}
             return
-
-        step_time_pattern = re.compile(r"Step (\d+): Sending start_event|Step (\d+): sending start_event", re.IGNORECASE)
-        pause_pattern = re.compile(r"PAUSE activated|Manager is PAUSED", re.IGNORECASE)
-        unpause_pattern = re.compile(r"PAUSE deactivated|Resuming main loop", re.IGNORECASE)
-
+    
+        step_pattern = re.compile(r"Step (\d+): start", re.IGNORECASE)
+        pause_pattern = re.compile(r"PAUSE activated|Paused\. Waiting for unpause", re.IGNORECASE)
+        unpause_pattern = re.compile(r"PAUSE deactivated|Unpaused\. Restarting game", re.IGNORECASE)
+        restart_pattern = re.compile(r"Click analysis failed\. Restarting game", re.IGNORECASE)
+    
         with open(self.log_file, encoding="utf-8") as f:
             lines = f.readlines()
-
-        self.step_times.clear()
-        self.last_step_timestamp = None
+    
+        self.session_step_times.clear()
+        self.session_clicks = 0
+        self.game_steps.clear()
+        self.current_game_steps = 0
+        self.max_steps = 0
         self.paused = False
         self.last_status = "Active"
         self.last_step_num = 0
-
-        step_timestamps = []
-        last_unpause_idx = 0
-
+    
+        last_step_time = None
+    
         for idx, line in enumerate(lines):
             if pause_pattern.search(line):
                 self.paused = True
                 self.last_status = "Pause"
-                last_unpause_idx = idx + 1
-                step_timestamps = []
-            elif unpause_pattern.search(line):
+                if self.current_game_steps > 0:
+                    self.game_steps.append(self.current_game_steps)
+                    if self.current_game_steps > self.max_steps:
+                        self.max_steps = self.current_game_steps
+                    self.current_game_steps = 0
+    
+            elif unpause_pattern.search(line) or restart_pattern.search(line):
                 self.paused = False
                 self.last_status = "Active"
-                last_unpause_idx = idx
-                step_timestamps = []
-            elif step_time_pattern.search(line):
-                try:
-                    ts = self.extract_timestamp(line)
-                    step_timestamps.append(ts)
-                    match = step_time_pattern.search(line)
-                    step_num = match.group(1) or match.group(2)
-                    if step_num:
-                        self.last_step_num = int(step_num)
-                except Exception:
-                    pass
-
-        avg_step_time = ""
-        if len(step_timestamps) >= 2:
-            step_intervals = [
-                step_timestamps[i + 1] - step_timestamps[i]
-                for i in range(len(step_timestamps) - 1)
-            ]
-            avg_sec = sum(step_intervals) / len(step_intervals)
+                if self.current_game_steps > 0:
+                    self.game_steps.append(self.current_game_steps)
+                    if self.current_game_steps > self.max_steps:
+                        self.max_steps = self.current_game_steps
+                    self.current_game_steps = 0
+    
+            elif step_pattern.search(line):
+                self.session_clicks += 1
+                match = step_pattern.search(line)
+                step_num = match.group(1)
+                if step_num:
+                    self.last_step_num = int(step_num)
+                    self.current_game_steps += 1
+    
+                ts = self.extract_timestamp(line)
+                if last_step_time is not None:
+                    self.session_step_times.append(ts - last_step_time)
+                last_step_time = ts
+    
+        if self.current_game_steps > 0:
+            self.game_steps.append(self.current_game_steps)
+            if self.current_game_steps > self.max_steps:
+                self.max_steps = self.current_game_steps
+    
+        avg_step_time = "-"
+        if self.session_step_times:
+            avg_sec = sum(self.session_step_times) / len(self.session_step_times)
             avg_step_time = f"{avg_sec:.2f} sec"
-        else:
-            avg_step_time = "-"
-
+    
+        avg_steps = "-"
+        if self.game_steps:
+            avg_steps = f"{sum(self.game_steps) / len(self.game_steps):.2f}"
+    
+        max_steps = str(self.max_steps) if self.max_steps > 0 else "-"
+    
         self.params["Status"] = self.last_status
-        self.params["Step"] = str(self.last_step_num)
+        self.params["Click Counter"] = str(self.session_clicks)
         self.params["Average Step Time"] = avg_step_time
+        self.params["Average Steps"] = avg_steps
+        self.params["Max Steps"] = max_steps
 
     @staticmethod
     def extract_timestamp(line: str) -> float:
