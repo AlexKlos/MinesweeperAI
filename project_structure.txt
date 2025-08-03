@@ -1,25 +1,22 @@
 project_root/
 ├─ assets/
-│  ├─ playground.png            # Screenshot of the game field
+│  ├─ playground.png            # Screenshot of the empty game field
+│  ├─ playground_30_16.png      # Resized screenshot of the game field
 │  ├─ happy_face.png            # Positive indicator
 │  ├─ scared_face.png           # Neutral/intermediate indicator
 │  ├─ dead_face.png             # Negative indicator
+│  ├─ start_playground.npy      # Empty gamefield numpy-array
 │  └─ datasets/                 # Datasets for model training
 │     └─ ...
 ├─ logs/                        # Logs
-│  ├─ main_pipeline.log
-│  ├─ manager.log
+│  ├─ minesweeper_ai.log
 │  └─ ...
 ├─ src/
 │  └─ minesweeper_ai/
 │      ├─ __init__.py
-│      ├─ main_pipeline.py      # Main pipeline (screenshot - inference - click)
-│      ├─ manager.py            # Process and application manager
-│      ├─ rich_interface.py     # TUI/CLI interface for monitoring the application state
-│      ├─ ipc.py                # Inter-process communication utilities (shared memory, events, etc.)
-│      └─ types.py              # Common data structures and enums for statuses
+│      ├─ minesweeper_ai.py     # Main script
+│      └─ rich_interface.py     # TUI/CLI interface for monitoring the application state
 ├─ project_structure.txt        # Project structure
 ├─ requirements.txt             # Project dependencies
 ├─ README.md                    # Project description
-├─ scheme.png                   # Application architecture diagram
 └─ .gitignore
