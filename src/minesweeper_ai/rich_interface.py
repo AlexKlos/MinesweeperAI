@@ -20,8 +20,7 @@ class LogMonitor:
     def __init__(self):
         self.console = Console()
         self.log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
-        self.manager_log = os.path.join(self.log_dir, "manager.log")
-        self.pipeline_log = os.path.join(self.log_dir, "main_pipeline.log")
+        self.log_file = os.path.join(self.log_dir, "minesweeper_ai.log")
         self.params = {k: "" for k in PARAM_KEYS}
         self.step_times = []
         self.last_step_timestamp = None
@@ -30,7 +29,7 @@ class LogMonitor:
         self.last_step_num = 0
 
     def parse_runtime_params(self):
-        if not os.path.exists(self.manager_log):
+        if not os.path.exists(self.log_file):
             self.params = {k: "?" for k in PARAM_KEYS}
             return
 
@@ -38,7 +37,7 @@ class LogMonitor:
         pause_pattern = re.compile(r"PAUSE activated|Manager is PAUSED", re.IGNORECASE)
         unpause_pattern = re.compile(r"PAUSE deactivated|Resuming main loop", re.IGNORECASE)
 
-        with open(self.manager_log, encoding="utf-8") as f:
+        with open(self.log_file, encoding="utf-8") as f:
             lines = f.readlines()
 
         self.step_times.clear()
@@ -134,22 +133,14 @@ class LogMonitor:
             Layout(name="params", size=height_params),
             Layout(name="logs", ratio=1)
         )
-        
-        layout["logs"].split_row(
-            Layout(name="manager_logs"),
-            Layout(name="pipeline_logs")
-        )
 
         with Live(layout, refresh_per_second=4, console=self.console) as live:
             while True:
                 try:
                     self.parse_runtime_params()
                     layout["params"].update(self.get_params_panel())
-                    layout["logs"]["manager_logs"].update(
-                        self.get_log_panel(self.manager_log, "Manager Logs")
-                    )
-                    layout["logs"]["pipeline_logs"].update(
-                        self.get_log_panel(self.pipeline_log, "Main Pipeline Logs")
+                    layout["logs"].update(
+                        self.get_log_panel(self.log_file, "Logs")
                     )
                 except Exception as e:
                     layout["logs"].update(Panel(f"Error: {str(e)}", title="Logs"))
