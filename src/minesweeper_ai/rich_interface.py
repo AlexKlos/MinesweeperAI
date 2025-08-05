@@ -32,6 +32,13 @@ class LogMonitor:
         self.last_status = "Pause"
         self.paused = True
 
+    def get_max_log_lines(self):
+        total_height = self.console.size.height
+        params_panel_height = len(PARAM_KEYS) + 2
+        reserved = params_panel_height + 3
+        log_lines = max(total_height - reserved, 3)
+        return log_lines
+
     def parse_runtime_params(self):
         if not os.path.exists(self.log_file):
             self.params = {k: "?" for k in PARAM_KEYS}
@@ -138,8 +145,11 @@ class LogMonitor:
                 return Panel("Log file not found", title=f"[{LOGS_COLOR}]{title}[/{LOGS_COLOR}]", border_style=LOGS_COLOR)
             with open(log_path, "r", encoding="utf-8") as f:
                 log_content = f.read()
+            max_log_lines = self.get_max_log_lines()
+            lines = log_content.splitlines() if log_content else []
+            shown = lines[-max_log_lines:] if lines else []
             return Panel(
-                log_content[-1800:] if log_content else "Log is empty",
+                "\n".join(shown) if shown else "Log is empty",
                 title=f"[{LOGS_COLOR}]{title}[/{LOGS_COLOR}]",
                 border_style=LOGS_COLOR
             )
