@@ -182,7 +182,6 @@ def click_cell(playground, best_x, best_y):
     cell_h = h / 16.0
     abs_x = int(x + best_x * cell_w + cell_w // 2)
     abs_y = int(y + best_y * cell_h + cell_h // 2)
-    logging.info("Click cell: best_x=%d, best_y=%d -> abs=(%d, %d)", best_x, best_y, abs_x, abs_y)
     click(abs_x, abs_y)
     return abs_x, abs_y
 
@@ -241,6 +240,7 @@ def copy_first_step_assets(timestamp):
 
 def main():
     setup_logging()
+    logging.info("Started Minesweeper AI")
     playground_template = os.path.join(ASSETS_DIR, "playground.png")
     happy_face_path   = os.path.join(ASSETS_DIR, "happy_face.png")
     dead_face_path    = os.path.join(ASSETS_DIR, "dead_face.png")
@@ -280,6 +280,9 @@ def main():
             next_raw_img, next_sample, next_timestamp = capture_playground(playground)
             click_success = check_click_success(next_sample, current_sample, happy_face, dead_face, face_rectangle)
 
+            logging.info(
+                f"Step {step}: save, best_x={best_x}, best_y={best_y}, success={click_success}"
+            )
             save_file(current_raw_img, "raw_screenshot", current_timestamp, "png")
             save_file(np.squeeze(current_sample.T), "30x16_screenshot", current_timestamp, "png")
             save_file(current_sample, "numpy_array", current_timestamp, "npy")
