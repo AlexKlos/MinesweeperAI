@@ -2,3 +2,5 @@ keyboard==0.13.5
 opencv-python==4.12.*
 mss==10.0.0
 rich==13.9.4
+torch==2.7.*
+python-dotenv==1.*

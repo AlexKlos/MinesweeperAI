@@ -7,6 +7,10 @@ from rich.live import Live
 from rich.layout import Layout
 from rich.panel import Panel
 
+PARAM_COLOR = "#9C85CC"
+LOGS_COLOR = "#62A6A8"
+TRAIN_COLOR = "#C9D96A"
+
 PARAM_KEYS = [
     "Status",
     "Click Counter",
@@ -14,8 +18,16 @@ PARAM_KEYS = [
     "Average Steps",
     "Max Steps"
 ]
-PARAM_COLOR = "#9C85CC"
-LOGS_COLOR = "#62A6A8"
+
+TRAIN_KEYS = [
+    "Training Status",
+    "Train Samples",
+    "Train Accuracy",
+    "Train Loss",
+    "Train Epoch",
+    "Train Step",
+    "Train Steps Total"
+]
 
 
 class LogMonitor:
@@ -24,6 +36,7 @@ class LogMonitor:
         self.log_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../logs"))
         self.log_file = os.path.join(self.log_dir, "minesweeper_ai.log")
         self.params = {k: "" for k in PARAM_KEYS}
+        self.train_params = {k: "" for k in TRAIN_KEYS}
         self.session_step_times = []
         self.session_clicks = 0
         self.game_steps = []
@@ -32,26 +45,31 @@ class LogMonitor:
         self.last_status = "Pause"
         self.paused = True
 
-    def get_max_log_lines(self):
+    def get_max_log_lines(self, top_height):
         total_height = self.console.size.height
-        params_panel_height = len(PARAM_KEYS) + 2
-        reserved = params_panel_height + 3
+        reserved = top_height + 3
         log_lines = max(total_height - reserved, 3)
         return log_lines
 
     def parse_runtime_params(self):
         if not os.path.exists(self.log_file):
             self.params = {k: "?" for k in PARAM_KEYS}
+            self.train_params = {k: "?" for k in TRAIN_KEYS}
             return
-    
+
         step_pattern = re.compile(r"Step (\d+): start", re.IGNORECASE)
         pause_pattern = re.compile(r"PAUSE activated|Paused\. Waiting for unpause", re.IGNORECASE)
         unpause_pattern = re.compile(r"PAUSE deactivated|Unpaused\. Restarting game", re.IGNORECASE)
         restart_pattern = re.compile(r"Click analysis failed\. Restarting game", re.IGNORECASE)
-    
+        train_start_pattern = re.compile(r"Training started on (\d+) samples", re.IGNORECASE)
+        train_end_pattern = re.compile(r"Training finished: (\d{8}_\d{6}), samples=(\d+), val_metrics=.*accuracy['\"]*[:= ]*([\d.]+)", re.IGNORECASE)
+        train_epoch_pattern = re.compile(r"\[TRAIN\]\[(?P<train_id>\d+_\d+)\] Epoch (?P<epoch>\d+)/(?P<epochs>\d+) Batch (?P<batch>\d+)/(?P<batches>\d+) Step (?P<step>\d+)/(?P<steps>\d+) BatchLoss=(?P<loss>[\d.]+)")
+        train_epoch_end_pattern = re.compile(r"\[TRAIN\]\[(?P<train_id>\d+_\d+)\] Epoch (?P<epoch>\d+)/(?P<epochs>\d+) complete\. TrainLoss=(?P<train_loss>[\d.]+)")
+        train_val_metrics_pattern = re.compile(r"\[TRAIN\]\[(?P<train_id>\d+_\d+)\] Validation metrics: val_accuracy=(?P<val_acc>[\d.]+), val_loss=(?P<val_loss>[\d.]+)")
+
         with open(self.log_file, encoding="utf-8") as f:
             lines = f.readlines()
-    
+
         self.session_step_times.clear()
         self.session_clicks = 0
         self.game_steps.clear()
@@ -60,9 +78,9 @@ class LogMonitor:
         self.paused = False
         self.last_status = "Active"
         self.last_step_num = 0
-    
+
         last_step_time = None
-    
+
         for idx, line in enumerate(lines):
             if pause_pattern.search(line):
                 self.paused = True
@@ -116,6 +134,47 @@ class LogMonitor:
         self.params["Average Step Time"] = avg_step_time
         self.params["Average Steps"] = avg_steps
         self.params["Max Steps"] = max_steps
+    
+        for k in TRAIN_KEYS:
+            self.train_params[k] = "-"
+    
+        for line in reversed(lines):
+            m = train_epoch_pattern.search(line)
+            if m:
+                self.train_params["Training Status"] = "Training"
+                self.train_params["Train Epoch"] = f"{m.group('epoch')}/{m.group('epochs')}"
+                self.train_params["Train Step"] = f"{m.group('step')}/{m.group('steps')}"
+                self.train_params["Train Loss"] = m.group("loss")
+                self.train_params["Train Steps Total"] = m.group("steps")
+                break
+    
+        for line in reversed(lines):
+            m = train_epoch_end_pattern.search(line)
+            if m:
+                self.train_params["Training Status"] = f"Epoch {m.group('epoch')} Done"
+                self.train_params["Train Epoch"] = f"{m.group('epoch')}/{m.group('epochs')}"
+                self.train_params["Train Loss"] = m.group("train_loss")
+                break
+    
+        for line in reversed(lines):
+            m = train_val_metrics_pattern.search(line)
+            if m:
+                self.train_params["Train Accuracy"] = m.group("val_acc")
+                self.train_params["Train Loss"] = m.group("val_loss")
+                break
+    
+        for line in reversed(lines):
+            if train_end_pattern.search(line):
+                m = train_end_pattern.search(line)
+                self.train_params["Training Status"] = "Done"
+                self.train_params["Train Samples"] = m.group(2)
+                self.train_params["Train Accuracy"] = m.group(3)
+                break
+            elif train_start_pattern.search(line):
+                m = train_start_pattern.search(line)
+                self.train_params["Training Status"] = "Training"
+                self.train_params["Train Samples"] = m.group(1)
+                break
 
     @staticmethod
     def extract_timestamp(line: str) -> float:
@@ -131,7 +190,7 @@ class LogMonitor:
             f"[{PARAM_COLOR}]{k}[/{PARAM_COLOR}]: [bold]{self.params[k]}[/bold]"
             for k in PARAM_KEYS
         ]
-        height = len(PARAM_KEYS) + 2
+        height = max(len(PARAM_KEYS), len(TRAIN_KEYS)) + 2
         return Panel(
             "\n".join(params_lines),
             title="Runtime Parameters",
@@ -139,13 +198,26 @@ class LogMonitor:
             border_style=PARAM_COLOR
         )
 
-    def get_log_panel(self, log_path: str, title: str) -> Panel:
+    def get_train_panel(self):
+        train_lines = [
+            f"[{TRAIN_COLOR}]{k}[/{TRAIN_COLOR}]: [bold]{self.train_params[k]}[/bold]"
+            for k in TRAIN_KEYS
+        ]
+        height = max(len(PARAM_KEYS), len(TRAIN_KEYS)) + 2
+        return Panel(
+            "\n".join(train_lines),
+            title="Training Parameters",
+            height=height,
+            border_style=TRAIN_COLOR
+        )
+
+    def get_log_panel(self, log_path: str, title: str, top_height: int) -> Panel:
         try:
             if not os.path.exists(log_path):
                 return Panel("Log file not found", title=f"[{LOGS_COLOR}]{title}[/{LOGS_COLOR}]", border_style=LOGS_COLOR)
             with open(log_path, "r", encoding="utf-8") as f:
                 log_content = f.read()
-            max_log_lines = self.get_max_log_lines()
+            max_log_lines = self.get_max_log_lines(top_height)
             lines = log_content.splitlines() if log_content else []
             shown = lines[-max_log_lines:] if lines else []
             return Panel(
@@ -161,20 +233,26 @@ class LogMonitor:
             )
 
     def run(self):
-        layout = Layout()
         height_params = len(PARAM_KEYS) + 2
+        height_train = len(TRAIN_KEYS) + 2
+        top_height = max(height_params, height_train)
+        layout = Layout()
         layout.split(
-            Layout(name="params", size=height_params),
+            Layout(name="top", size=top_height),
             Layout(name="logs", ratio=1)
         )
-
+        layout["top"].split_row(
+            Layout(name="params"),
+            Layout(name="train"),
+        )
         with Live(layout, refresh_per_second=4, console=self.console) as live:
             while True:
                 try:
                     self.parse_runtime_params()
-                    layout["params"].update(self.get_params_panel())
+                    layout["top"]["params"].update(self.get_params_panel())
+                    layout["top"]["train"].update(self.get_train_panel())
                     layout["logs"].update(
-                        self.get_log_panel(self.log_file, "Logs")
+                        self.get_log_panel(self.log_file, "Logs", top_height)
                     )
                 except Exception as e:
                     layout["logs"].update(Panel(f"Error: {str(e)}", title="Logs"))

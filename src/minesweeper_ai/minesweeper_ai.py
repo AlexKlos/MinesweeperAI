@@ -1,23 +1,34 @@
-import os
-import time
-import logging
-import threading
+import ctypes
 import json
+import logging
+import os
 import shutil
+import threading
+import time
 
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 
 import cv2
+import keyboard
 import mss
 import numpy as np
-import keyboard
-import ctypes
+import torch
+import torch.nn as nn
+import torch.optim as optim
+
+from dotenv import load_dotenv
+from torch.utils.data import Dataset, DataLoader
+
+from src.models.cnn_model import MinesweeperCNN
+
+load_dotenv()
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-ASSETS_DIR = os.path.join(PROJECT_ROOT, "assets")
-DATASET_BASE = os.path.join(ASSETS_DIR, "dataset")
-LOGS_DIR = os.path.join(PROJECT_ROOT, "logs")
+ASSETS_DIR = os.environ.get("ASSETS_DIR", os.path.join(PROJECT_ROOT, "assets"))
+DATASET_BASE = os.environ.get("DATASET_BASE", os.path.join(PROJECT_ROOT, "dataset"))
+LOGS_DIR = os.environ.get("LOGS_DIR", os.path.join(PROJECT_ROOT, "logs"))
+MODEL_DIR = os.environ.get("MODEL_DIR", os.path.join(PROJECT_ROOT, "models"))
 
 MOVE_RESULTS_DIR = os.path.join(DATASET_BASE, "move_results")
 MOVE_VISUALS_DIR = os.path.join(DATASET_BASE, "move_visuals")
@@ -25,12 +36,17 @@ NUMPY_DIR = os.path.join(DATASET_BASE, "numpy_array")
 SCREENSHOT_RAW_DIR = os.path.join(DATASET_BASE, "raw_screenshot")
 SCREENSHOT_30x16_DIR = os.path.join(DATASET_BASE, "30x16_screenshot")
 
-GAME_WIDTH = 480
-GAME_HEIGHT = 256
-CELLS_X = 30
-CELLS_Y = 16
+GAME_WIDTH = int(os.environ.get("GAME_WIDTH", 480))
+GAME_HEIGHT = int(os.environ.get("GAME_HEIGHT", 256))
+CELLS_X = int(os.environ.get("CELLS_X", 30))
+CELLS_Y = int(os.environ.get("CELLS_Y", 16))
 
-GAME_PAUSE = 0.01
+GAME_PAUSE = float(os.environ.get("GAME_PAUSE", 0.01))
+MIN_TRAIN_SAMPLES = int(os.environ.get("MIN_TRAIN_SAMPLES", 1000))
+MODEL_PATH = os.environ.get("MODEL_PATH", "models/current_model.pt")
+USE_GPU = os.environ.get("USE_GPU", "auto")
+
+_model_cache = {}
 
 
 def setup_logging():
@@ -41,7 +57,124 @@ def setup_logging():
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s]: %(message)s",
         handlers=[handler],
+        force=True,
     )
+
+
+class MinesweeperDataset(Dataset):
+    def __init__(self, file_ids, numpy_dir, results_dir):
+        self.file_ids = list(file_ids)
+        self.numpy_dir = numpy_dir
+        self.results_dir = results_dir
+
+    def __len__(self):
+        return len(self.file_ids)
+
+    def __getitem__(self, idx):
+        fid = self.file_ids[idx]
+        X = np.load(os.path.join(self.numpy_dir, f"{fid}.npy")).astype(np.float32)
+        X = np.squeeze(X).T[None, ...]
+        with open(os.path.join(self.results_dir, f"{fid}.json"), "r") as f:
+            move = json.load(f)
+        y = np.zeros((30, 16), dtype=np.float32)
+        if 0 <= move["best_x"] < 30 and 0 <= move["best_y"] < 16:
+            y[move["best_x"], move["best_y"]] = 1.0
+        y = y.T
+        return torch.from_numpy(X), torch.from_numpy(y)
+    
+
+def start_training(valid_files, model_path, device="cpu"):
+    train_id = datetime.now().strftime("%Y%m%d_%H%M%S")
+    file_list = list(valid_files)
+    np.random.shuffle(file_list)
+    split = int(len(file_list) * 0.9)
+    train_ids = file_list[:split]
+    val_ids = file_list[split:]
+
+    train_dataset = MinesweeperDataset(train_ids, NUMPY_DIR, MOVE_RESULTS_DIR)
+    val_dataset = MinesweeperDataset(val_ids, NUMPY_DIR, MOVE_RESULTS_DIR)
+    train_loader = DataLoader(train_dataset, batch_size=32, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=32, shuffle=False)
+
+    logging.info(f"[TRAIN][{train_id}] Training started on {len(valid_files)} samples")
+    logging.info(f"[TRAIN][{train_id}] Data loaded. Train={len(train_ids)}, Val={len(val_ids)}")
+
+    model = MinesweeperCNN().to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
+    criterion = nn.BCEWithLogitsLoss()
+
+    num_epochs = 3
+    total_steps = len(train_loader) * num_epochs
+    current_step = 0
+
+    for epoch in range(num_epochs):
+        model.train()
+        running_loss = 0
+        for batch_idx, (X, y) in enumerate(train_loader):
+            X, y = X.to(device), y.to(device)
+            optimizer.zero_grad()
+            out = model(X)
+            loss = criterion(out, y)
+            loss.backward()
+            optimizer.step()
+            running_loss += loss.item() * X.size(0)
+
+            current_step += 1
+            logging.info(
+                f"[TRAIN][{train_id}] Epoch {epoch+1}/{num_epochs} "
+                f"Batch {batch_idx+1}/{len(train_loader)} "
+                f"Step {current_step}/{total_steps} "
+                f"BatchLoss={loss.item():.5f}"
+            )
+
+        avg_loss = running_loss / len(train_loader.dataset)
+        logging.info(
+            f"[TRAIN][{train_id}] Epoch {epoch+1}/{num_epochs} complete. "
+            f"TrainLoss={avg_loss:.5f}"
+        )
+
+    model.eval()
+    correct = 0
+    total = 0
+    val_loss = 0.0
+    with torch.no_grad():
+        for batch_idx, (X, y) in enumerate(val_loader):
+            X, y = X.to(device), y.to(device)
+            logits = model(X)
+            loss = criterion(logits, y)
+            val_loss += loss.item() * X.size(0)
+            preds = torch.argmax(logits.reshape(-1, 16*30), dim=1)
+            targets = torch.argmax(y.reshape(-1, 16*30), dim=1)
+            correct += (preds == targets).sum().item()
+            total += len(preds)
+    accuracy = correct / total if total else 0.0
+    avg_val_loss = val_loss / len(val_loader.dataset) if len(val_loader.dataset) > 0 else 0.0
+
+    val_metrics = {"val_accuracy": accuracy, "val_loss": avg_val_loss}
+    logging.info(
+        f"[TRAIN][{train_id}] Validation metrics: val_accuracy={accuracy:.4f}, val_loss={avg_val_loss:.5f}"
+    )
+
+    torch.save(model.state_dict(), model_path)
+    with open(os.path.splitext(model_path)[0] + "_metrics.json", "w") as m:
+        json.dump(val_metrics, m, indent=2)
+
+    logging.info(f"[TRAIN][{train_id}] Training finished: samples={len(valid_files)}, val_metrics={val_metrics}")
+    return train_id, val_metrics
+
+
+def move_used_data(valid_files):
+    for f in valid_files:
+        npy_src = os.path.join(NUMPY_DIR, f"{f}.npy")
+        json_src = os.path.join(MOVE_RESULTS_DIR, f"{f}.json")
+        npy_dst = os.path.join(DATASET_BASE, "used_data", "numpy_array", f"{f}.npy")
+        json_dst = os.path.join(DATASET_BASE, "used_data", "move_results", f"{f}.json")
+        os.makedirs(os.path.dirname(npy_dst), exist_ok=True)
+        os.makedirs(os.path.dirname(json_dst), exist_ok=True)
+        if os.path.exists(npy_src):
+            shutil.move(npy_src, npy_dst)
+        if os.path.exists(json_src):
+            shutil.move(json_src, json_dst)
 
 
 def find_playground_coords(template_path):
@@ -166,12 +299,29 @@ def capture_playground(playground):
     return img, processed_expanded, timestamp
 
 
+def load_model(device="cpu"):
+    if "model" in _model_cache:
+        return _model_cache["model"]
+    model = MinesweeperCNN()
+    model_path = os.environ.get("MODEL_PATH", "models/current_model.pt")
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path, map_location=device))
+    model.eval()
+    _model_cache["model"] = model
+    return model
+
+
 def predict_move(processed_image):
+    device = "cpu"
+    model = load_model(device=device)
     if processed_image.ndim == 3:
-        processed_image = processed_image.squeeze()
+        processed_image = processed_image.squeeze(-1)
     assert processed_image.shape == (30, 16)
-    heatmap = np.random.rand(30, 16).astype(np.float32)
-    heatmap /= heatmap.sum()
+    x = torch.from_numpy(processed_image.T[None, None, ...].astype(np.float32))
+    x = x.view(1, 1, 30, 16)[:, :, :, :].squeeze(1)
+    with torch.no_grad():
+        logits = model(x)
+        heatmap = logits.squeeze(0).cpu().numpy()
     best_idx = np.unravel_index(np.argmax(heatmap), heatmap.shape)
     return best_idx
 
@@ -238,18 +388,53 @@ def copy_first_step_assets(timestamp):
     )
 
 
+def initialize_model_if_needed():
+    model_path = os.environ.get("MODEL_PATH", "models/current_model.pt")
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
+    if not os.path.exists(model_path):
+        model = MinesweeperCNN()
+        torch.save(model.state_dict(), model_path)
+        logging.info(f"Initial model saved to {model_path}")
+
+
+def analyze_dataset(min_samples: int):
+    numpy_files = sorted(os.listdir(NUMPY_DIR))
+    results_files = sorted(os.listdir(MOVE_RESULTS_DIR))
+    valid_files = set(f.replace('.npy', '') for f in numpy_files) & set(f.replace('.json', '') for f in results_files)
+    if len(valid_files) >= min_samples:
+        return True, valid_files
+    return False, valid_files
+
+
+def check_train_and_reset():
+    enough_data, valid_files = analyze_dataset(MIN_TRAIN_SAMPLES)
+    if enough_data:
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        train_id, val_metrics = start_training(
+            valid_files,
+            model_path=os.path.join(MODEL_DIR, f"model_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pt"),
+            device=device
+        )
+        move_used_data(valid_files)
+        logging.info(f"Training completed. Results: {val_metrics}. Used data moved.")
+
+
 def main():
     setup_logging()
+    for d in [ASSETS_DIR, DATASET_BASE, LOGS_DIR, MODEL_DIR, NUMPY_DIR, MOVE_RESULTS_DIR, MOVE_VISUALS_DIR, SCREENSHOT_RAW_DIR, SCREENSHOT_30x16_DIR, os.path.join(DATASET_BASE, "used_data", "numpy_array"), os.path.join(DATASET_BASE, "used_data", "move_results")]:
+        os.makedirs(d, exist_ok=True)
+    initialize_model_if_needed()
+
     logging.info("Started Minesweeper AI")
     playground_template = os.path.join(ASSETS_DIR, "playground.png")
-    happy_face_path   = os.path.join(ASSETS_DIR, "happy_face.png")
-    dead_face_path    = os.path.join(ASSETS_DIR, "dead_face.png")
+    happy_face_path = os.path.join(ASSETS_DIR, "happy_face.png")
+    dead_face_path = os.path.join(ASSETS_DIR, "dead_face.png")
     playground = find_playground_coords(playground_template)
     logging.info("Playground detected at %s", playground)
     face_rectangle = get_face_rectangle(playground)
     face_center = get_face_center(face_rectangle)
     happy_face = cv2.imread(happy_face_path, cv2.IMREAD_COLOR)
-    dead_face  = cv2.imread(dead_face_path,  cv2.IMREAD_COLOR)
+    dead_face = cv2.imread(dead_face_path, cv2.IMREAD_COLOR)
 
     paused_flag = threading.Event()
     shutdown_flag = threading.Event()
@@ -297,6 +482,7 @@ def main():
                     time.sleep(0.1)
                 if shutdown_flag.is_set():
                     break
+                check_train_and_reset()
                 logging.info("Unpaused. Restarting game.")
                 click(*face_center)
                 step = 1
@@ -306,6 +492,7 @@ def main():
                 continue
 
             if not click_success:
+                check_train_and_reset()
                 logging.info("Click analysis failed. Restarting game.")
                 click(*face_center)
                 step = 1

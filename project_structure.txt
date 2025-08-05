@@ -1,22 +1,41 @@
 project_root/
-├─ assets/
-│  ├─ playground.png            # Screenshot of the empty game field
-│  ├─ playground_30_16.png      # Resized screenshot of the game field
-│  ├─ happy_face.png            # Positive indicator
-│  ├─ scared_face.png           # Neutral/intermediate indicator
-│  ├─ dead_face.png             # Negative indicator
-│  ├─ start_playground.npy      # Empty gamefield numpy-array
-│  └─ datasets/                 # Datasets for model training
-│     └─ ...
-├─ logs/                        # Logs
-│  ├─ minesweeper_ai.log
-│  └─ ...
+├─ assets/                          # Static assets and templates for the Minesweeper agent
+│  ├─ playground.png                # Screenshot of the empty game field (reference)
+│  ├─ playground_30_16.png          # Resized game field image (30x16)
+│  ├─ happy_face.png                # "Win" face (smile) for status detection
+│  ├─ scared_face.png               # Neutral/intermediate face for status detection (optional)
+│  ├─ dead_face.png                 # "Lose" face (dead) for status detection
+│  └─ start_playground.npy          # Numpy array of the initial (empty) game state
+│
+├─ dataset/                         # Automatically generated training data and predictions
+│  ├─ numpy_array/                  # Board state arrays (input to model, .npy files)
+│  ├─ move_results/                 # Move labels/metadata (.json files, e.g. {best_x, best_y, success, step})
+│  ├─ move_visuals/                 # Visualization images (board with move marker)
+│  ├─ raw_screenshot/               # Raw screenshots captured from the game
+│  ├─ 30x16_screenshot/             # Resized screenshots (30x16) for visual checks
+│  └─ used_data/                    # Archive of used data after training
+│      ├─ numpy_array/              # Used input arrays
+│      └─ move_results/             # Used move labels/metadata
+│
+├─ logs/                            # Application and training logs
+│  ├─ minesweeper_ai.log            # Main application log file
+│  └─ ...                           # Other logs (e.g., training session logs)
+│
 ├─ src/
-│  └─ minesweeper_ai/
+│  ├─ minesweeper_ai/               # Main source code for the Minesweeper AI agent
+│  │   ├─ __init__.py
+│  │   ├─ minesweeper_ai.py         # Main application entry point (data collection, training loop)
+│  │   └─ rich_interface.py         # Terminal UI for monitoring the app (log/metrics viewer)
+│  │
+│  └─ models/                       # Model architecture code (not weights)
 │      ├─ __init__.py
-│      ├─ minesweeper_ai.py     # Main script
-│      └─ rich_interface.py     # TUI/CLI interface for monitoring the application state
-├─ project_structure.txt        # Project structure
-├─ requirements.txt             # Project dependencies
-├─ README.md                    # Project description
-└─ .gitignore
+│      └─ cnn_model.py              # CNN model definition for Minesweeper agent
+│
+├─ models/                          # Saved model weights/checkpoints (not code)
+│  ├─ current_model.pt              # Current/active PyTorch model weights
+│  └─ ...                           # Other saved model versions/checkpoints
+│
+├─ requirements.txt                 # Python package dependencies
+├─ README.md                        # Project documentation and setup instructions
+├─ .gitignore                       # Files and folders to exclude from git versioning
+└─ project_structure.txt            # (Optional) This structure description file

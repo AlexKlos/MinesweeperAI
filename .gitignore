@@ -175,3 +175,5 @@ cython_debug/
 
 media/
 assets/dataset/
+dataset/
+models/
